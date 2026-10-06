@@ -1,0 +1,26 @@
+# Secrets & credentials
+.env
+.env.*
+*.pem
+.aws/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Lambda build artifacts
+*.zip
+
+# Bedrock AgentCore
+.bedrock_agentcore/
+.bedrock_agentcore.yaml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
