@@ -66,10 +66,10 @@ os.environ["BYPASS_TOOL_CONSENT"] = "true"
 # REGION:     your AWS region, e.g. "us-east-1"
 # MEMORY_ID   format: shown in the AgentCore Memory console
 
-GATEWAY_URL = "<gateway_url>"   # TODO: Replace with your Gateway URL
-KB_ID       = "<kbid>"          # TODO: Replace with your Knowledge Base ID
-REGION      = "<region>"        # TODO: Replace with your AWS region
-MEMORY_ID   = "<mem_id>"        # TODO: Replace with your Memory ID
+GATEWAY_URL = "https://customersupportgateway-pwftlnoa7l.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+KB_ID       = "JNLPCQWR5L"
+REGION      = "us-east-1"
+MEMORY_ID   = "CustomerSupportMemory-TBFx7w7vOp"        # TODO: Replace with your Memory ID
 
 
 # ── TODO 3 — Model and Clients ────────────────────────────────────────────────
