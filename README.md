@@ -1,3 +1,8 @@
+## Submission
+- Reflection: [REFLECTION.md](REFLECTION.md)
+- Test screenshots: [screenshots/](screenshots/)
+- Agent code: [starter/main.py](starter/main.py)
+
 # Project: Building a Customer Support AI Agent with Amazon Bedrock AgentCore
 
 **Udacity — AWS AI Engineering Nanodegree**
