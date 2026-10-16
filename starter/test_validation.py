@@ -32,6 +32,7 @@ GOOD_DISCOUNT = {
     "order_total": 150.0, "tier": "Gold", "points_redeemed": 4000, "points_discount": 40.0,
     "tier_discount_pct": 10.0, "tier_discount": 11.0, "final_total": 99.0,
     "total_savings": 51.0, "points_earned": 99, "remaining_points": 250,
+    "new_points_balance": 349,
 }
 
 
@@ -73,4 +74,5 @@ print("\nCode Interpreter discount breakdown (DiscountBreakdown):")
 check_discount("valid breakdown, final_total $99.00", GOOD_DISCOUNT)
 check_discount("wrong arithmetic, final_total $120.00", {**GOOD_DISCOUNT, "final_total": 120.0})
 check_discount("points not in blocks of 500 (4250)", {**GOOD_DISCOUNT, "points_redeemed": 4250})
+check_discount("new balance does not add up (300)", {**GOOD_DISCOUNT, "new_points_balance": 300})
 print()
