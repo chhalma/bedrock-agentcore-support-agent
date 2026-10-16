@@ -2,7 +2,7 @@
 - Reflection: [REFLECTION.md](REFLECTION.md)
 - Test screenshots: [screenshots/](screenshots/)
 - Agent code: [starter/main.py](starter/main.py)
-
+- Extra memory sumarisation and pydantic structured output is created
 # Project: Building a Customer Support AI Agent with Amazon Bedrock AgentCore
 
 **Udacity — AWS AI Engineering Nanodegree**
