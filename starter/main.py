@@ -148,7 +148,7 @@ class DiscountBreakdown(BaseModel):
     tier: Literal["Silver", "Gold", "Platinum"]
     points_redeemed: int = Field(ge=0)
     points_discount: float = Field(ge=0)
-    tier_discount_rate: str
+    tier_discount_pct: float = Field(ge=0, le=100)
     tier_discount: float = Field(ge=0)
     final_total: float = Field(ge=0)
     total_savings: float = Field(ge=0)
@@ -509,7 +509,7 @@ print(json.dumps({
     "tier": tier,
     "points_redeemed": points_redeemed,
     "points_discount": round(points_discount, 2),
-    "tier_discount_rate": f"{int(tier_rate * 100)}%",
+    "tier_discount_pct": round(tier_rate * 100, 2),
     "tier_discount": tier_discount,
     "final_total": final_total,
     "total_savings": total_savings,
@@ -538,14 +538,18 @@ print(json.dumps({
         tier_rates = {"Silver": 0.00, "Gold": 0.10, "Platinum": 0.15}
         rate = tier_rates.get(tier.strip().capitalize(), 0.0)
         tier_discount = round(order_total * rate, 2)
+        
         return json.dumps({
             "note": "Code Interpreter unavailable; only the tier discount was applied.",
             "order_total": order_total,
             "tier": tier,
-            "tier_discount_rate": f"{int(rate * 100)}%",
+            "points_redeemed": 0,
+            "tier_discount_pct": round(rate * 100, 2),
             "tier_discount": tier_discount,
             "final_total": round(order_total - tier_discount, 2),
+            "remaining_points": loyalty_points,
         })
+
  
 
 
