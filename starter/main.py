@@ -28,8 +28,13 @@ from mcp.client.streamable_http import streamable_http_client
 import argparse, json
 import os, asyncio, boto3
 from strands.hooks import (
-    HookProvider, AfterInvocationEvent, HookRegistry, MessageAddedEvent,
+    HookProvider, AfterInvocationEvent, HookRegistry, MessageAddedEvent, AfterToolCallEvent
 )
+from strands.agent.conversation_manager import SummarizingConversationManager
+
+from pydantic import BaseModel, Field, ValidationError, model_validator
+from typing import List, Literal, Optional
+
 import logging
 import uuid
 from typing import Dict
@@ -70,6 +75,8 @@ GATEWAY_URL = "https://customersupportgateway-pwftlnoa7l.gateway.bedrock-agentco
 KB_ID       = "JNLPCQWR5L"
 REGION      = "us-east-1"
 MEMORY_ID   = "CustomerSupportMemory-TBFx7w7vOp"        #  Replace with your Memory ID
+HISTORY_TURNS        = 20     # how many past turns of this session to reload
+HISTORY_TOKEN_BUDGET = 500   # summarize older turns once history exceeds this, # low for the demo; production would be much higher
 
 
 # ── 3 — Model and Clients ────────────────────────────────────────────────
@@ -90,6 +97,85 @@ memory_client = MemoryClient(region_name = REGION) # Replace this line
 
 # Create the boto3 bedrock-agent-runtime client
 _bedrock_runtime =  boto3.client("bedrock-agent-runtime", region_name = REGION) # Replace this line
+
+# ── Response Models (Pydantic) ────────────────────────────────────────────────
+# Tool results are validated against these before the model sees them, so
+# malformed or impossible data never reaches the customer.
+
+class OrderItem(BaseModel):
+    name: str
+    qty: int = Field(ge=1)
+    price: float = Field(ge=0)
+
+class Order(BaseModel):
+    order_id: str = Field(pattern=r"^ORD-\d+$")
+    customer_id: str = Field(pattern=r"^CUST-\d+$")
+    status: Literal["PROCESSING", "SHIPPED", "OUT FOR DELIVERY", "DELIVERED", "CANCELLED"]
+    items: List[OrderItem] = Field(min_length=1)
+    total: float = Field(ge=0)
+    tracking_number: Optional[str] = None
+    carrier: Optional[str] = None
+
+class CustomerOrders(BaseModel):
+    customer_id: str
+    orders: List[Order]
+
+class Customer(BaseModel):
+    name: str
+    loyalty_points: int = Field(ge=0)
+    tier: Literal["Silver", "Gold", "Platinum"]
+
+class Refund(BaseModel):
+    refund_id: str = Field(pattern=r"^REF-[A-Z0-9]{8}$")
+    order_id: str
+    status: Literal["APPROVED", "PENDING", "REJECTED"]
+    amount: float = Field(ge=0)
+    message: str
+
+class RefundStatus(BaseModel):
+    refund_id: str
+    status: str
+    eta: str
+
+class ReturnLabel(BaseModel):
+    order_id: str
+    label_url: str = Field(pattern=r"^https://")
+    carrier: str
+    valid_until: str
+
+class DiscountBreakdown(BaseModel):
+    order_total: float = Field(gt=0)
+    tier: Literal["Silver", "Gold", "Platinum"]
+    points_redeemed: int = Field(ge=0)
+    points_discount: float = Field(ge=0)
+    tier_discount_rate: str
+    tier_discount: float = Field(ge=0)
+    final_total: float = Field(ge=0)
+    total_savings: float = Field(ge=0)
+    points_earned: int = Field(ge=0)
+    remaining_points: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def check_arithmetic(self):
+        if self.points_redeemed % 500:
+            raise ValueError("points must be redeemed in blocks of 500")
+        if self.points_discount > self.order_total * 0.5 + 0.01:
+            raise ValueError("points discount exceeds 50% of the order")
+        expected = round(self.order_total - self.points_discount - self.tier_discount, 2)
+        if abs(expected - self.final_total) > 0.01:
+            raise ValueError(f"final_total {self.final_total} != expected {expected}")
+        return self
+
+
+# Gateway tool name (without the "target___" prefix) → expected result model
+TOOL_RESULT_MODELS = {
+    "get_order": Order,
+    "get_customer_orders": CustomerOrders,
+    "get_customer": Customer,
+    "initiate_refund": Refund,
+    "check_refund_status": RefundStatus,
+    "get_return_label": ReturnLabel,
+}
 
 
 # ──  4 — Namespace Helper ─────────────────────────────────────────────────
@@ -263,6 +349,44 @@ class MemoryHook(HookProvider):
         # Register save_support_interaction on AfterInvocationEvent
         registry.add_callback(AfterInvocationEvent, self.save_support_interaction)
 
+class ToolResultValidationHook(HookProvider):
+    """Validate gateway tool results against Pydantic models before the model sees them."""
+
+    def validate_tool_result(self, event: AfterToolCallEvent):
+        tool_name = event.tool_use.get("name", "").split("___")[-1]
+        model_cls = TOOL_RESULT_MODELS.get(tool_name)
+        result = event.result
+        if model_cls is None or result.get("status") != "success":
+            return
+
+        text = next((c["text"] for c in result.get("content", []) if "text" in c), None)
+        if text is None:
+            return
+
+        try:
+            payload = json.loads(text)
+            # refund-processor wraps its data as {"statusCode": ..., "body": "<json string>"}
+            if isinstance(payload, dict) and "statusCode" in payload and "body" in payload:
+                body = payload["body"]
+                payload = json.loads(body) if isinstance(body, str) else body
+            # Business errors such as "Order not found" are valid answers; pass them through.
+            if isinstance(payload, dict) and "error" in payload:
+                return
+            model_cls.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.warning(f"Tool result failed validation for {tool_name}: {e}")
+            event.result = {
+                **result,
+                "status": "error",
+                "content": [{"text": (
+                    f"The {tool_name} tool returned malformed data, so it was withheld. "
+                    "Tell the customer this information is temporarily unavailable. Do not guess."
+                )}],
+            }
+
+    def register_hooks(self, registry: HookRegistry) -> None:  # type: ignore
+        registry.add_callback(AfterToolCallEvent, self.validate_tool_result)
+
 
 # ── 6 — Knowledge Base Tool ─────────────────────────────────────────────
 # Implement search_knowledge_base(query) using the @tool decorator.
@@ -403,7 +527,10 @@ print(json.dumps({
                 "clearContext": True,
             })
             for event in response["stream"]:
-                return json.dumps(event["result"])
+                stdout = event["result"].get("structuredContent", {}).get("stdout", "")
+                breakdown = DiscountBreakdown.model_validate_json(stdout)
+                return breakdown.model_dump_json()
+
         return json.dumps({"error": "Code Interpreter returned no result."})
 
     except Exception as e:
@@ -421,6 +548,7 @@ print(json.dumps({
         })
  
 
+
 # ── 8 — Agent Entrypoint ─────────────────────────────────────────────────
 # Implement the invoke() function decorated with @app.entrypoint.
 #
@@ -435,6 +563,45 @@ print(json.dumps({
 #   6. Create and invoke the Agent with all tools, hooks, and system_prompt
 #   7. Return the text from the first content block of the response
 #   8. Handle exceptions gracefully
+
+# ── Session history and summarization ────────────────────────────────────────
+
+def load_session_history(actor_id: str, session_id: str) -> list:
+    """Rebuild this session's earlier turns from AgentCore Memory as Strands messages."""
+    try:
+        turns = memory_client.get_last_k_turns(
+            memory_id=MEMORY_ID, actor_id=actor_id, session_id=session_id, k=HISTORY_TURNS
+        )
+    except Exception as e:
+        logger.error(f"Loading session history failed: {e}")
+        return []
+
+    messages = []
+    for turn in reversed(turns):  # the API returns the newest turn first
+        for msg in turn:
+            role = msg.get("role", "").lower()
+            text = msg.get("content", {}).get("text", "")
+            if role in ("user", "assistant") and text:
+                messages.append({"role": role, "content": [{"text": text}]})
+    return messages
+
+
+def estimate_tokens(messages: list) -> int:
+    """Rough token count: about 4 characters per token."""
+    return sum(len(_message_text(m)) for m in messages) // 4
+
+
+def compact_history(agent: Agent) -> None:
+    """Summarize the oldest messages until the history fits the token budget."""
+    while estimate_tokens(agent.messages) > HISTORY_TOKEN_BUDGET:
+        before = len(agent.messages)
+        agent.conversation_manager.reduce_context(agent)
+        if len(agent.messages) >= before:  # nothing left to summarize
+            break
+        logger.warning(
+            f"Summarized session history: {before} -> {len(agent.messages)} messages, "
+            f"~{estimate_tokens(agent.messages)} tokens"
+        )
 
 @app.entrypoint
 async def invoke(payload, context=None):
@@ -455,6 +622,8 @@ async def invoke(payload, context=None):
 
         if not user_input:
             return "Please provide a prompt."
+
+        history = load_session_history(actor_id, session_id)
 
         # 2. Long-term memory for this customer and session
         memory_hook = MemoryHook(
@@ -480,6 +649,7 @@ Use your tools instead of guessing:
 - Any loyalty discount or price calculation: use calculate_loyalty_discount. Never do the math yourself.
 - Any URL or website request (any site, not only Amazon): you DO have live web access.
   Always use the browser tool to open the page and read it. Never claim you cannot browse.
+- Never state policies, tier benefits, or prices from your own knowledge; only from tool results.
 
 
 If a message starts with "Customer Context:", use it to personalise your answer,
@@ -496,10 +666,17 @@ but do not repeat it back verbatim. If you cannot find an answer, say so honestl
             agent = Agent(
                 model=model,
                 tools=tools,
-                hooks=[memory_hook],
+                hooks=[memory_hook,ToolResultValidationHook()],
                 system_prompt=system_prompt,
+                messages=history,
+                conversation_manager=SummarizingConversationManager(
+                    summary_ratio=0.5,
+                    preserve_recent_messages=4,
+                ),
             )
+            compact_history(agent)
             result = await agent.invoke_async(user_input)
+
 
         # 7. Return the text of the final answer
         return _message_text(result.message) or str(result)

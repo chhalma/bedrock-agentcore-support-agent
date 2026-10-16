@@ -81,6 +81,8 @@ def build_policy(partition, account, settings):
                     "bedrock-agentcore:GetMemory",
                     "bedrock-agentcore:RetrieveMemoryRecords",
                     "bedrock-agentcore:CreateEvent",
+                    # Needed to reload session history (get_last_k_turns) for summarization.
+                    "bedrock-agentcore:ListEvents",
                 ],
                 "Resource": [memory, memory + "/*"],
             },
