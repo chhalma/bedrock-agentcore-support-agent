@@ -284,4 +284,4 @@ Most resources are pay-per-use, but delete them when you are done:
 
 ## Credits
 
-Built as the *Customer Support AI Agent* project of Udacity's **AWS AI Engineering Nanodegree**. The starter scaffolding, Lambda functions and catalog are Udacity course material (see [LICENSE.txt](LICENSE.txt)). The original brief is in [docs/udacity-project-instructions.md](docs/udacity-project-instructions.md).
+Built as the *Customer Support AI Agent* project of Udacity's **Future AWS Agent Engineer Nanodegree**. The starter scaffolding, Lambda functions and catalog are Udacity course material (see [LICENSE.txt](LICENSE.txt)). The original brief is in [docs/udacity-project-instructions.md](docs/udacity-project-instructions.md).
